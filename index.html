@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Moai Topple — Premium Edition</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Fredoka+One&family=Nunito:wght@400;600;700;800;900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body data-active-player="none">
+
+  <!-- ========================
+       SETUP OVERLAY
+       ======================== -->
+  <div id="setup-overlay" class="overlay active">
+    <div class="overlay-panel">
+      <!-- Intro Moai SVG Element generated via JS or embedded here -->
+      <div id="setup-moai-container" style="margin: 0 auto 15px; width: 80px; height: 100px;"></div>
+      <h1 class="overlay-title">MOAI TOPPLE</h1>
+      <p class="overlay-lore">
+        Dominate the island by ascending your Sacred Moais to the top of the volcanic chute!
+      </p>
+      <p class="diff-label">— CHOOSE PLAYER SETTING —</p>
+      <div class="diff-buttons">
+        <button class="diff-btn novice" onclick="GameApp.startGame(1)">
+          🤖<br><strong>1 Player</strong><br><small>vs Spirit AI</small>
+        </button>
+        <button class="diff-btn warrior" onclick="GameApp.startGame(2)">
+          👥<br><strong>2 Players</strong><br><small>Pass & Play</small>
+        </button>
+        <button class="diff-btn shaman" onclick="GameApp.startGame(3)">
+          👪<br><strong>3 Players</strong><br><small>Pass & Play</small>
+        </button>
+        <button class="diff-btn shaman" onclick="GameApp.startGame(4)">
+          👨‍👩‍👧‍👦<br><strong>4 Players</strong><br><small>Pass & Play</small>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================
+       PASS DEVICE OVERLAY
+       ======================== -->
+  <div id="pass-overlay" class="overlay">
+    <div class="overlay-panel pass-panel">
+      <div style="font-size:3em; margin-bottom:10px">📱</div>
+      <h2 class="overlay-title" id="pass-title">Pass Device</h2>
+      <p class="overlay-lore" id="pass-msg">
+        Pass to the next player. Keep it secret!
+      </p>
+      <button class="diff-btn warrior" onclick="GameApp.UI.startTurn()" style="margin-top:10px">
+        ✅ I am ready! Start My Turn
+      </button>
+    </div>
+  </div>
+
+  <!-- ========================
+       GAME OVER OVERLAY
+       ======================== -->
+  <div id="gameover-overlay" class="overlay">
+    <div class="overlay-panel">
+      <div id="go-result-icon" style="font-size:4em;margin-bottom:10px">🎉</div>
+      <h2 id="go-result-text" class="overlay-title">VICTORY!</h2>
+      <div id="go-scores" class="go-scores" style="margin-bottom: 20px; flex-wrap:wrap"></div>
+      <button class="diff-btn warrior" onclick="GameApp.resetToSetup()">
+        🗿 Back to Main Menu
+      </button>
+    </div>
+  </div>
+
+  <!-- ========================
+       STATUS & TOASTED PANEL (Moved Outside Board)
+       ======================== -->
+  <div class="board-panel status-panel">
+    <div class="turn-badge" id="turn-badge">Player 1</div>
+    <div class="round-badge" id="round-badge">Round 1</div>
+    <div id="toasted-area" class="toasted-area" style="display:none">
+      <div style="font-family:var(--font-game);font-size:.7em;color:#ff8800;margin-bottom:4px">🔥 TOASTED 🔥</div>
+      <div id="toasted-faces"></div>
+    </div>
+  </div>
+
+  <!-- ========================
+       BOARD
+       ======================== -->
+  <div class="board-container">
+    <div class="board-mat" id="board-mat">
+
+      <!-- SCORE TRACK -->
+      <div id="score-track-container"></div>
+
+      <!-- SCORE PAWNS -->
+      <div class="score-pawn pawn-p1" id="pawn-0" data-pid="0">P1</div>
+      <div class="score-pawn pawn-p2" id="pawn-1" data-pid="1">P2</div>
+      <div class="score-pawn pawn-p3" id="pawn-2" data-pid="2">P3</div>
+      <div class="score-pawn pawn-p4" id="pawn-3" data-pid="3">P4</div>
+
+
+      <!-- CENTRAL CHUTE -->
+      <div class="chute-container">
+
+        <!-- The actual scroll board for 9 pieces -->
+        <div class="chute-track" id="chute-track"></div>
+      </div>
+
+      <!-- SECRET GOALS FLIP CARD -->
+      <div class="secret-card-container" id="secret-card-container" style="display:none">
+        <div class="secret-card" id="secret-card" onclick="window.dispatchAction('TOGGLE_GOALS')">
+          <!-- BACK -->
+          <div class="card-face card-back">
+            <div class="tribal-pattern"></div>
+            <div class="card-logo">?</div>
+          </div>
+          <!-- FRONT -->
+          <div class="card-face card-front">
+            <div class="card-title">MY GOALS</div>
+            <div id="goals-list" class="goals-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="side-mask left-mask"></div>
+      <div class="side-mask right-mask"></div>
+    </div>
+  </div>
+
+  <!-- PLAYER HAND (Bottom UI) -->
+  <div class="ui-bottom" id="ui-bottom" style="display:none">
+    <div style="display:flex; justify-content:space-between; width:100%; max-width:800px; padding:0 20px">
+      <div class="hand-label"><span id="hand-player-name">YOUR</span> CARDS <span id="hand-count" class="badge"></span>
+      </div>
+    </div>
+    <!-- Cards Container -->
+    <div class="card-hand" id="card-hand"></div>
+    <div id="hint-area" class="hint-text">Pick a card, then tap a target piece in the middle track.</div>
+  </div>
+
+  <audio id="bg-music" src="themesong.mpeg" loop></audio>
+  <audio id="toast-sound" src="faa.mpeg"></audio>
+  <audio id="win-sound" src="win.mpeg"></audio>
+  <button class="sound-btn muted" id="soundToggle" title="Toggle Sound" onclick="GameApp.Audio.toggleSound()">🔇</button>
+
+  <script src="game.js"></script>
+</body>
+
+</html>
