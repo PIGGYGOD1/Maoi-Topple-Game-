@@ -26,20 +26,94 @@
       <p class="overlay-lore">
         Dominate the island by ascending your Sacred Moais to the top of the volcanic chute!
       </p>
-      <p class="diff-label">— CHOOSE PLAYER SETTING —</p>
+      <p class="diff-label">— CHOOSE GAME MODE —</p>
       <div class="diff-buttons">
-        <button class="diff-btn novice" onclick="GameApp.startGame(1)">
-          🤖<br><strong>1 Player</strong><br><small>vs Spirit AI</small>
+        <button class="diff-btn novice" onclick="GameApp.menu.selectMode('ai')">
+          🤖<br><strong>Vs AI</strong><br><small>Single Player</small>
         </button>
-        <button class="diff-btn warrior" onclick="GameApp.startGame(2)">
-          👥<br><strong>2 Players</strong><br><small>Pass & Play</small>
+        <button class="diff-btn warrior" onclick="GameApp.menu.selectMode('passplay')">
+          👥<br><strong>Pass & Play</strong><br><small>Local Multiplayer</small>
         </button>
-        <button class="diff-btn shaman" onclick="GameApp.startGame(3)">
-          👪<br><strong>3 Players</strong><br><small>Pass & Play</small>
+        <button class="diff-btn shaman" onclick="GameApp.menu.selectMode('online')">
+          🌐<br><strong>Online</strong><br><small>Internet Match</small>
         </button>
-        <button class="diff-btn shaman" onclick="GameApp.startGame(4)">
-          👨‍👩‍👧‍👦<br><strong>4 Players</strong><br><small>Pass & Play</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================
+       DIFFICULTY OVERLAY
+       ======================== -->
+  <div id="difficulty-overlay" class="overlay">
+    <div class="overlay-panel">
+      <h2 class="overlay-title">Select Difficulty</h2>
+      <p class="overlay-lore">
+        How many points to claim victory?
+      </p>
+      <p class="diff-label">— CHOOSE LEVEL —</p>
+      <div class="diff-buttons">
+        <button class="diff-btn novice" onclick="GameApp.setDifficulty(30)">
+          🌱<br><strong>Easy</strong><br><small>First to 30 Points</small>
         </button>
+        <button class="diff-btn warrior" onclick="GameApp.setDifficulty(60)">
+          🔥<br><strong>Medium</strong><br><small>First to 60 Points</small>
+        </button>
+        <button class="diff-btn shaman" onclick="GameApp.setDifficulty(100)">
+          🌋<br><strong>Hard</strong><br><small>First to 100 Points</small>
+        </button>
+      </div>
+      <button class="diff-btn" onclick="GameApp.menu.goBack()" style="margin-top:20px; font-size: 1em; padding: 10px;">
+        ← Back
+      </button>
+    </div>
+  </div>
+
+  <div id="player-count-overlay" class="overlay">
+    <div class="overlay-panel">
+      <h2 class="overlay-title">Players</h2>
+      <p class="diff-label">— HOW MANY? —</p>
+      <div class="diff-buttons">
+        <button class="diff-btn" onclick="GameApp.menu.selectPlayerCount(2)">2 Players</button>
+        <button class="diff-btn" onclick="GameApp.menu.selectPlayerCount(3)">3 Players</button>
+        <button class="diff-btn" onclick="GameApp.menu.selectPlayerCount(4)">4 Players</button>
+      </div>
+      <button class="diff-btn" onclick="GameApp.menu.goBack()" style="margin-top:20px; padding: 10px;">← Back</button>
+    </div>
+  </div>
+
+  <div id="online-menu-overlay" class="overlay">
+    <div class="overlay-panel">
+      <h2 class="overlay-title">Internet</h2>
+      <p class="diff-label">— CONNECT —</p>
+      <div class="diff-buttons">
+        <button class="diff-btn novice" onclick="GameApp.menu.selectOnlineMode('play')">Play<br><small>Quickmatch</small></button>
+        <button class="diff-btn warrior" onclick="GameApp.menu.selectOnlineMode('create')">Create<br><small>Private Room</small></button>
+        <button class="diff-btn shaman" onclick="GameApp.menu.selectOnlineMode('join')">Join<br><small>Using Code</small></button>
+      </div>
+      <button class="diff-btn" onclick="GameApp.menu.goBack()" style="margin-top:20px; padding: 10px;">← Back</button>
+    </div>
+  </div>
+
+  <div id="join-room-overlay" class="overlay">
+    <div class="overlay-panel">
+      <h2 class="overlay-title">Join Match</h2>
+      <p class="diff-label">— ENTER ROOM CODE —</p>
+      <input type="text" id="room-code-input" placeholder="e.g. Maui714" style="width: 100%; padding: 10px; font-size: 1.2em; text-align: center; border-radius: 8px; border: none; margin-bottom: 20px; font-family: var(--font-body); font-weight: bold;">
+      <div class="diff-buttons">
+        <button class="diff-btn" onclick="GameApp.menu.joinRoomSubmit()">Join Room</button>
+      </div>
+      <button class="diff-btn" onclick="GameApp.menu.goBack()" style="margin-top:20px; padding: 10px;">← Back</button>
+    </div>
+  </div>
+
+  <div id="waiting-room-overlay" class="overlay">
+    <div class="overlay-panel">
+      <h2 class="overlay-title">Waiting...</h2>
+      <div id="waiting-room-code-display" style="font-family: var(--font-title); font-size: 2.5em; color: var(--gold); margin: 20px 0;">SEARCHING</div>
+      <p class="overlay-lore">Waiting for other players to connect. (Mockup)</p>
+      <div class="spinner-box" style="font-size: 3em; display: inline-block;">⏳</div>
+      <div style="width:100%">
+        <button class="diff-btn" onclick="GameApp.menu.goBack()" style="margin-top:20px; padding: 10px;">Cancel</button>
       </div>
     </div>
   </div>
@@ -74,12 +148,15 @@
     </div>
   </div>
 
-  <!-- ========================
-       STATUS & TOASTED PANEL (Moved Outside Board)
-       ======================== -->
-  <div class="board-panel status-panel">
-    <div class="turn-badge" id="turn-badge">Player 1</div>
-    <div class="round-badge" id="round-badge">Round 1</div>
+  <div class="board-panel status-panel minimized" id="status-panel" onclick="GameApp.UI.toggleStatusPanel()">
+    <div class="turn-badge" id="turn-badge">
+      <span id="tb-full" class="full-text">Player 1</span>
+      <span id="tb-short" class="short-text">P1</span>
+    </div>
+    <div class="round-badge" id="round-badge">
+      <span id="rb-full" class="full-text">Round 1</span>
+      <span id="rb-short" class="short-text">R1</span>
+    </div>
     <div id="toasted-area" class="toasted-area" style="display:none">
       <div style="font-family:var(--font-game);font-size:.7em;color:#ff8800;margin-bottom:4px">🔥 TOASTED 🔥</div>
       <div id="toasted-faces"></div>
@@ -109,24 +186,26 @@
         <div class="chute-track" id="chute-track"></div>
       </div>
 
-      <!-- SECRET GOALS FLIP CARD -->
-      <div class="secret-card-container" id="secret-card-container" style="display:none">
-        <div class="secret-card" id="secret-card" onclick="window.dispatchAction('TOGGLE_GOALS')">
-          <!-- BACK -->
-          <div class="card-face card-back">
-            <div class="tribal-pattern"></div>
-            <div class="card-logo">?</div>
-          </div>
-          <!-- FRONT -->
-          <div class="card-face card-front">
-            <div class="card-title">MY GOALS</div>
-            <div id="goals-list" class="goals-list"></div>
-          </div>
-        </div>
-      </div>
+
 
       <div class="side-mask left-mask"></div>
       <div class="side-mask right-mask"></div>
+    </div>
+  </div>
+
+  <!-- SECRET GOALS FLIP CARD -->
+  <div class="secret-card-container" id="secret-card-container" style="display:none">
+    <div class="secret-card" id="secret-card" onclick="GameApp.UI.toggleGoals(event)">
+      <!-- BACK -->
+      <div class="card-face card-back">
+        <div class="tribal-pattern"></div>
+        <div class="card-logo">?</div>
+      </div>
+      <!-- FRONT -->
+      <div class="card-face card-front">
+        <div class="card-title">MY GOALS</div>
+        <div id="goals-list" class="goals-list"></div>
+      </div>
     </div>
   </div>
 

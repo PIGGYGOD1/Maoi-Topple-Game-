@@ -28,17 +28,14 @@ const UI_COLORS = ['#2ecc71', '#3498db', '#f1c40f', '#e74c3c'];
 // ==========================================
 class ShapeManager {
     static getTile(t, isTarget = false, isGoal = false) {
-        const border = isTarget ? `border: 4px solid #fff; transform: scale(1.1);` : 'border: 2px solid transparent;';
-        const star = isGoal ? `<div style="position:absolute; top:-15px; right:-15px; font-size:1.8em; filter:drop-shadow(0 2px 4px rgba(0,0,0,0.8)); z-index:20;">⭐</div>` : '';
-
+        const targetStyle = isTarget ? `border: 4px solid #fff; transform: scale(1.1);` : 'border: 2px solid transparent;';
         const imgName = t.id.replace('-', '') + '.png'; // converts 't-1' to 't1.png'
 
         return `
     <div style="width: 100%; height: 100%; position: relative;">
-      <div class="tiki-image-sprite ${isTarget ? 'is-target' : ''}" 
-           style="${border} background-image: url('${imgName}'); background-size: contain; background-repeat: no-repeat; background-position: center; border-radius: 12px; background-color: transparent;">
+      <div class="tiki-image-sprite ${isTarget ? 'is-target' : ''} ${isGoal ? 'is-goal-glow' : ''}" 
+           style="${targetStyle} background-image: url('${imgName}'); background-size: contain; background-repeat: no-repeat; background-position: center; border-radius: 12px; background-color: transparent;">
       </div>
-      ${star}
     </div>`;
     }
 }
@@ -123,7 +120,7 @@ const RulesEngine = {
             case 'topple':
                 return flatTotem.length > 1 && flatIndex !== flatTotem.length - 1; // Can't topple already bottom piece
             case 'toast':
-                return flatIndex === flatTotem.length - 1 && flatTotem.length > 3; // Must be bottom piece, must have >3 left
+                return flatTotem.length > 3; // Any piece can be toasted, must have >3 left
             default:
                 return false;
         }
@@ -144,6 +141,7 @@ const RulesEngine = {
                 newState.turnPhase = 'play'; // 'play', 'resolve', 'pass_device', 'gameover'
                 newState.selectedCardId = null;
                 newState.goalsSecret = true;
+                newState.winScore = action.payload.winScore || 35;
                 break;
 
             case 'SELECT_CARD':
@@ -205,7 +203,7 @@ const RulesEngine = {
                         if (p.score > maxScore) maxScore = p.score;
                     });
 
-                    if (maxScore >= 35) {
+                    if (maxScore >= newState.winScore) {
                         newState.turnPhase = 'gameover';
                     } else {
                         newState.round++;
@@ -296,7 +294,11 @@ class UIRenderer {
         const isHuman = !cp.isAI;
 
         // Overlay Management
-        document.getElementById('setup-overlay').classList.toggle('active', !state.players.length);
+        const isGameStarted = state.players.length > 0;
+        if (isGameStarted) {
+            document.getElementById('setup-overlay').classList.remove('active');
+            document.getElementById('difficulty-overlay').classList.remove('active');
+        }
         document.getElementById('pass-overlay').classList.toggle('active', state.turnPhase === 'pass_device');
         
         const goOverlay = document.getElementById('gameover-overlay');
@@ -322,10 +324,13 @@ class UIRenderer {
         document.body.style.setProperty('--active-player-color', cp.color);
 
         // Turn & Rounds
-        document.getElementById('round-badge').textContent = `Round ${state.round}`;
+        document.getElementById('rb-full').textContent = `Round ${state.round}`;
+        document.getElementById('rb-short').textContent = `R${state.round}`;
+        
         const tb = document.getElementById('turn-badge');
-        tb.textContent = `${cp.name}'s Turn`;
         tb.style.background = cp.color;
+        document.getElementById('tb-full').textContent = `${cp.name}'s Turn`;
+        document.getElementById('tb-short').textContent = cp.isAI ? 'AI' : cp.name.substring(0,2).toUpperCase();
 
         // Pawns
         for (let i = 0; i < 4; i++) {
@@ -412,26 +417,37 @@ class UIRenderer {
         if (isHuman) {
             document.getElementById('ui-bottom').style.display = 'flex';
             document.getElementById('hand-count').textContent = cp.cards.length;
-            document.getElementById('card-hand').innerHTML = cp.cards.map((c, i) => {
-                const isSel = c.id === state.selectedCardId;
-                let icon = '';
-                let lbl = '';
-                if (c.type === 'up') {
-                    icon = '⬆️';
-                    lbl = `Rise +${c.value}`;
-                } else if (c.type === 'topple') {
-                    icon = '🌀';
-                    lbl = 'Topple';
-                } else {
-                    icon = '🔥';
-                    lbl = 'Toast';
-                }
-                return `
-                <div class="play-card ${isSel?'active':''}" style="border-bottom: 4px solid ${cp.color}; animation-delay:${i*0.05}s" onclick="window.dispatchAction('SELECT_CARD', {cardId: '${c.id}'})">
-                    <span class="c-icon">${icon}</span>
-                    <span class="c-text">${lbl}</span>
-                </div>`;
-            }).join('');
+            const handEl = document.getElementById('card-hand');
+            const currentIds = Array.from(handEl.children).map(el => el.dataset.cardId).join(',');
+            const newIds = cp.cards.map(c => c.id).join(',');
+
+            if (currentIds === newIds && newIds !== "") {
+                Array.from(handEl.children).forEach(el => {
+                    if (el.dataset.cardId === state.selectedCardId) el.classList.add('active');
+                    else el.classList.remove('active');
+                });
+            } else {
+                handEl.innerHTML = cp.cards.map((c, i) => {
+                    const isSel = c.id === state.selectedCardId;
+                    let icon = '';
+                    let lbl = '';
+                    if (c.type === 'up') {
+                        icon = '⬆️';
+                        lbl = `Rise +${c.value}`;
+                    } else if (c.type === 'topple') {
+                        icon = '🌀';
+                        lbl = 'Topple';
+                    } else {
+                        icon = '🔥';
+                        lbl = 'Toast';
+                    }
+                    return `
+                    <div class="play-card ${isSel?'active':''}" data-card-id="${c.id}" style="border-bottom: 4px solid ${cp.color}; animation-delay:${i*0.05}s" onclick="window.dispatchAction('SELECT_CARD', {cardId: '${c.id}'})">
+                        <span class="c-icon">${icon}</span>
+                        <span class="c-text">${lbl}</span>
+                    </div>`;
+                }).join('');
+            }
         }
 
         if (state.turnPhase === 'gameover') {
@@ -461,6 +477,9 @@ class UIRenderer {
                 if (toastSound) {
                     toastSound.currentTime = 0;
                     toastSound.play().catch(e => console.log('SFX blocked:', e));
+                }
+                if (window.GameApp && window.GameApp.UI && window.GameApp.UI.expandStatusPanel) {
+                    window.GameApp.UI.expandStatusPanel();
                 }
             }
         });
@@ -510,8 +529,90 @@ window.dispatchAction = function (type, payload = {}) {
 
 // Map basic GUI buttons to generic actions
 window.GameApp = {
-    startGame: (n) => {
-        window.dispatchAction('START_GAME', { numPlayers: n });
+    pendingNumPlayers: 2,
+    pendingGameMode: null,
+    menuStateStack: ['setup-overlay'],
+    menu: {
+        openOverlay: (id) => {
+            document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            window.GameApp.menuStateStack.push(id);
+        },
+        goBack: () => {
+            if (window.GameApp.menuStateStack.length > 1) {
+                window.GameApp.menuStateStack.pop(); 
+                const prev = window.GameApp.menuStateStack[window.GameApp.menuStateStack.length - 1];
+                document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
+                document.getElementById(prev).classList.add('active');
+            }
+        },
+        selectMode: (mode) => {
+            window.GameApp.pendingGameMode = mode;
+            if (mode === 'ai') {
+                window.GameApp.pendingNumPlayers = 1;
+                window.GameApp.menu.openOverlay('difficulty-overlay');
+            } else if (mode === 'passplay') {
+                window.GameApp.menu.openOverlay('player-count-overlay');
+            } else if (mode === 'online') {
+                window.GameApp.menu.openOverlay('online-menu-overlay');
+            }
+        },
+        selectPlayerCount: (count) => {
+            window.GameApp.pendingNumPlayers = count;
+            window.GameApp.menu.openOverlay('difficulty-overlay');
+        },
+        selectOnlineMode: (action) => {
+            if (action === 'play') {
+                window.GameApp.pendingGameMode = 'onlinePlay';
+                window.GameApp.menu.openOverlay('player-count-overlay');
+            } else if (action === 'create') {
+                window.GameApp.pendingGameMode = 'onlineCreate';
+                window.GameApp.menu.openOverlay('player-count-overlay');
+            } else if (action === 'join') {
+                window.GameApp.pendingGameMode = 'onlineJoin';
+                window.GameApp.menu.openOverlay('join-room-overlay');
+            }
+        },
+        joinRoomSubmit: () => {
+            const val = document.getElementById('room-code-input').value.trim();
+            if (!val) return alert('Please enter a room code.');
+            document.getElementById('waiting-room-code-display').textContent = val;
+            window.GameApp.menu.openOverlay('waiting-room-overlay');
+        },
+        generateRoomId: () => {
+            const DICT = ['Rangi', 'Papa', 'Tane', 'Tanga', 'Tawhi', 'Tu', 'Rongo', 'Rua', 'Whiro', 'Maui'];
+            const name = DICT[Math.floor(Math.random() * DICT.length)];
+            const salt = Math.floor(Math.random() * 900) + 100;
+            return `${name}${salt}`;
+        }
+    },
+    startGame: (numPlayers) => {
+        window.GameApp.pendingNumPlayers = numPlayers;
+        document.getElementById('setup-overlay').classList.remove('active');
+        document.getElementById('difficulty-overlay').classList.add('active');
+    },
+    setDifficulty: (score) => {
+        const app = window.GameApp;
+        
+        if (app.pendingGameMode === 'onlinePlay') {
+            document.getElementById('waiting-room-code-display').textContent = 'SEARCHING...';
+            app.menu.openOverlay('waiting-room-overlay');
+            return;
+        } else if (app.pendingGameMode === 'onlineCreate') {
+            const code = app.menu.generateRoomId();
+            document.getElementById('waiting-room-code-display').textContent = code;
+            app.menu.openOverlay('waiting-room-overlay');
+            return;
+        }
+
+        // Standard AI or Pass & Play setup
+        document.getElementById('difficulty-overlay').classList.remove('active');
+        window.dispatchAction('START_GAME', { numPlayers: app.pendingNumPlayers, winScore: score });
+        
+        if (window.GameApp && window.GameApp.UI && window.GameApp.UI.expandStatusPanel) {
+            window.GameApp.UI.expandStatusPanel();
+        }
+
         const bgm = document.getElementById('bg-music');
         if (bgm && bgm.paused) {
             bgm.play().catch(e => console.log('Autoplay blocked:', e));
@@ -525,7 +626,34 @@ window.GameApp = {
     resetToSetup: () => window.location.reload(),
     UI: {
         startTurn: () => window.dispatchAction('START_PLAYER_TURN'),
-        toggleGoals: () => window.dispatchAction('TOGGLE_GOALS')
+        toggleGoals: (e) => {
+           const container = document.getElementById('secret-card-container');
+           if (container && container.dataset.dragged === 'true') {
+               container.dataset.dragged = 'false';
+               return; 
+           }
+           window.dispatchAction('TOGGLE_GOALS');
+        },
+        toggleStatusPanel: () => {
+            const panel = document.getElementById('status-panel');
+            if (!panel) return;
+            if (panel.classList.contains('minimized')) {
+                window.GameApp.UI.expandStatusPanel();
+            } else {
+                panel.classList.add('minimized');
+                if (window.toastTimer) clearTimeout(window.toastTimer);
+            }
+        },
+        expandStatusPanel: () => {
+            const panel = document.getElementById('status-panel');
+            if (panel) {
+                panel.classList.remove('minimized');
+                if (window.toastTimer) clearTimeout(window.toastTimer);
+                window.toastTimer = setTimeout(() => {
+                    panel.classList.add('minimized');
+                }, 3000);
+            }
+        }
     },
     Audio: { 
         toggleSound: () => {
@@ -545,7 +673,69 @@ window.GameApp = {
     }
 };
 
-// Run track generator manually on load
+// ==========================================
+// 10. DRAG MANAGER
+// ==========================================
+const CardDragger = {
+    init() {
+        const container = document.getElementById('secret-card-container');
+        if(!container) return;
+        
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+        
+        container.addEventListener('pointerdown', (e) => {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            
+            const rect = container.getBoundingClientRect();
+            if (container.style.left === '') {
+                container.style.right = 'auto';
+                container.style.marginTop = '0';
+                container.style.top = rect.top + 'px';
+                container.style.left = rect.left + 'px';
+            }
+            initialLeft = parseFloat(container.style.left);
+            initialTop = parseFloat(container.style.top);
+            
+            container.dataset.dragged = 'false';
+            document.body.style.userSelect = 'none';
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if(!isDragging) return;
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            
+            if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                container.dataset.dragged = 'true';
+            }
+            
+            let newX = initialLeft + dx;
+            let newY = initialTop + dy;
+            
+            newX = Math.max(0, Math.min(newX, window.innerWidth - 145));
+            newY = Math.max(0, Math.min(newY, window.innerHeight - 240));
+            
+            container.style.left = newX + 'px';
+            container.style.top = newY + 'px';
+
+            const card = document.getElementById('secret-card');
+            if (newX < window.innerWidth / 2 - 70) {
+                card.style.setProperty('--idle-translate', '-45px');
+            } else {
+                card.style.setProperty('--idle-translate', '45px');
+            }
+        });
+
+        window.addEventListener('pointerup', () => {
+            isDragging = false;
+            document.body.style.userSelect = 'auto';
+        });
+    }
+};
+
 window.addEventListener('DOMContentLoaded', () => {
     // Generate initial pawns tracks visually so they mount
     const mockRenderer = new UIRenderer();
@@ -556,4 +746,6 @@ window.addEventListener('DOMContentLoaded', () => {
         d.style.left = pos.x + 'px'; d.style.top = pos.y + 'px';
         parent.appendChild(d);
     });
+    
+    CardDragger.init();
 });
