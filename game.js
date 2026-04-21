@@ -133,12 +133,14 @@ const RulesEngine = {
 
         switch (action.type) {
             case 'START_GAME':
+                newState.isOnlineGame = action.payload.isOnlineGame || false;
                 newState.players = Models.generatePlayers(action.payload.numPlayers);
                 newState.totem = Models.generateTotem();
                 newState.toasted = [];
                 newState.currentPlayerIndex = 0;
                 newState.round = 1;
-                newState.turnPhase = 'play'; // 'play', 'resolve', 'pass_device', 'gameover'
+                // If it's a local pass-and-play game among multiple humans, force 'pass_device', otherwise just 'play'.
+                newState.turnPhase = (newState.players.length > 1 && !newState.players[0].isAI && !newState.isOnlineGame) ? 'pass_device' : 'play';
                 newState.selectedCardId = null;
                 newState.goalsSecret = true;
                 newState.winScore = action.payload.winScore || 35;
@@ -214,12 +216,12 @@ const RulesEngine = {
                             p.secretGoals = Models.generateSecretGoals();
                         });
                         newState.currentPlayerIndex = 0;
-                        newState.turnPhase = newState.players.length > 1 && !newState.players[0].isAI ? 'pass_device' : 'play';
+                        newState.turnPhase = (newState.players.length > 1 && !newState.players[0].isAI && !newState.isOnlineGame) ? 'pass_device' : 'play';
                     }
                 } else {
                     newState.currentPlayerIndex = (newState.currentPlayerIndex + 1) % newState.players.length;
                     const nextP = newState.players[newState.currentPlayerIndex];
-                    newState.turnPhase = (newState.players.length > 1 && !nextP.isAI) ? 'pass_device' : 'play';
+                    newState.turnPhase = (newState.players.length > 1 && !nextP.isAI && !newState.isOnlineGame) ? 'pass_device' : 'play';
                 }
                 newState.goalsSecret = true;
                 break;
@@ -254,6 +256,11 @@ class Store {
         console.log("ACTION:", action.type, action.payload);
         const nextState = this.reducer.applyAction(this.state || {}, action);
         this.state = nextState;
+
+        // Seamless Realtime Multiplayer Hook
+        if (window.NetworkManager && window.NetworkManager.channel && action.type !== 'RESET') {
+            window.NetworkManager.broadcastState(this.state);
+        }
 
         // Unidirectional rendering cycle
         if (this.state.animationsQueue.length > 0) {
@@ -295,7 +302,15 @@ class UIRenderer {
 
         // Overlay Management
         const isGameStarted = state.players.length > 0;
+        
+        const menuBtn = document.getElementById('game-menu-btn');
+        if (menuBtn) {
+            menuBtn.style.display = (isGameStarted && state.turnPhase !== 'gameover' && state.turnPhase !== 'pass_device') ? 'flex' : 'none';
+        }
+
         if (isGameStarted) {
+            const ho = document.getElementById('home-overlay');
+            if (ho) ho.classList.remove('active');
             document.getElementById('setup-overlay').classList.remove('active');
             document.getElementById('difficulty-overlay').classList.remove('active');
         }
@@ -339,11 +354,17 @@ class UIRenderer {
             if (p) {
                 el.style.display = 'flex';
                 el.style.background = p.color;
+                el.style.borderColor = '#fff';
+                el.style.color = '#fff';
+                el.style.textShadow = 'none';
+                el.style.boxShadow = '';
+                
                 const pos = p.score <= 0 ? { x: 20, y: 90 } : this.stonePxs[Math.min(p.score - 1, 34)];
                 const offset = [{ dx: -2, dy: -2 }, { dx: 2, dy: -2 }, { dx: -2, dy: 2 }, { dx: 2, dy: 2 }][i];
                 el.style.left = (pos.x + offset.dx) + '%';
                 el.style.top = (pos.y + offset.dy) + '%';
-                el.innerText = p.isAI ? "AI" : p.name.substr(0, 2);
+                el.innerText = "🐒";
+                el.style.fontSize = "2.1em";
             } else el.style.display = 'none';
         }
 
@@ -517,6 +538,148 @@ const AIEngine = {
     }
 };
 
+/* ================================================================
+   NETWORK MANAGER (Supabase Realtime Broadcast)
+   ================================================================ */
+const SUPABASE_URL = 'https://cpqxqzzcidazhxfgvatn.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_jQb0QtinjOpcb5L-bQSpMQ_ZSmHN15-';
+const LOCAL_CLIENT_ID = 'cli_' + Math.random().toString(36).substr(2, 9);
+
+const NetworkManager = {
+    client: null,
+    channel: null,
+    roomId: null,
+    isHost: false,
+    expectedPlayers: 2,
+    clientList: [],
+    
+    init() {
+        if (!window.supabase) {
+            setTimeout(() => this.init(), 500); // Retry if CDN is slow
+            return;
+        }
+        this.client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        this.updateStatusUI('Connected', 'green');
+    },
+
+    updateStatusUI(text, color) {
+        const wrap = document.getElementById('network-status');
+        const d = document.getElementById('net-dot');
+        const t = document.getElementById('net-text');
+        if (wrap) {
+            wrap.style.display = 'flex';
+            d.style.background = color;
+            t.textContent = text;
+        }
+    },
+
+    createRoom(expectedPlayers) {
+        this.roomId = 'M' + Math.floor(1000 + Math.random() * 9000);
+        this.isHost = true;
+        this.expectedPlayers = expectedPlayers;
+        this.clientList = [LOCAL_CLIENT_ID];
+        this.joinChannel(this.roomId, expectedPlayers);
+        return this.roomId;
+    },
+
+    joinRoom(id) {
+        this.roomId = id;
+        this.isHost = false;
+        this.joinChannel(id, 0);
+    },
+
+    joinChannel(id, expectedPlayers) {
+        if (this.channel) this.channel.unsubscribe();
+        this.updateStatusUI('Joining...', 'yellow');
+
+        this.channel = this.client.channel(`room:${id}`, {
+            config: { broadcast: { ack: true } }
+        });
+
+        this.channel
+            .on('broadcast', { event: 'game-state' }, (payload) => {
+                if (payload.payload) {
+                    window.gameStore.state = payload.payload;
+                    window.gameStore.renderer.render(window.gameStore.state);
+
+                    // Immediately force away all non-gameplay overlays for Guests
+                    if (window.gameStore.state.turnPhase !== 'setup') {
+                        document.querySelectorAll('.overlay').forEach(el => {
+                            if (el.id !== 'pass-overlay' && el.id !== 'gameover-overlay' && el.id !== 'player-goals-overlay') {
+                                el.classList.remove('active');
+                            }
+                        });
+                        if (window.GameApp) window.GameApp.menuStateStack = [];
+                    }
+                }
+            })
+            .on('broadcast', { event: 'request-join' }, (payload) => {
+                if (this.isHost) {
+                    const cid = payload.payload || 'unknown';
+                    if (!this.clientList.includes(cid)) {
+                        this.clientList.push(cid);
+                    }
+                    
+                    if (window.GameApp && window.GameApp.menuStateStack.includes('waiting-room-overlay')) {
+                        const titleEl = document.getElementById('waiting-title');
+                        
+                        if (this.clientList.length < this.expectedPlayers) {
+                            if (titleEl) titleEl.textContent = `Waiting (${this.clientList.length}/${this.expectedPlayers} Joined)...`;
+                        } else if (!this._gameStarting) {
+                            this._gameStarting = true;
+                            if (titleEl) titleEl.textContent = "All Players Ready! Starting...";
+                            setTimeout(() => {
+                               window.GameApp.startOnlineGame(this.expectedPlayers);
+                            }, 800);
+                        }
+                    } else if (window.gameStore && window.gameStore.state && window.gameStore.state.turnPhase !== 'setup') {
+                        // If game already started and someone refreshed/rejoined, resync them
+                        this.broadcastState(window.gameStore.state);
+                    }
+                }
+            })
+            .subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    this.updateStatusUI(`Room: ${id}`, 'lime');
+                    if (!this.isHost) {
+                        // Keep requesting join until state is populated and turnPhase is active
+                        let attempts = 0;
+                        const tryJoin = setInterval(() => {
+                            if (window.gameStore && window.gameStore.state && window.gameStore.state.turnPhase) {
+                                clearInterval(tryJoin);
+                                return;
+                            }
+                            if (this.channel) {
+                                this.channel.send({ type: 'broadcast', event: 'request-join', payload: LOCAL_CLIENT_ID });
+                            }
+                            attempts++;
+                            if (attempts > 30) clearInterval(tryJoin); // timeout after 30s
+                        }, 1000);
+                        
+                        this.channel.send({ type: 'broadcast', event: 'request-join', payload: LOCAL_CLIENT_ID });
+                    }
+                } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                    this.updateStatusUI('Offline', 'red');
+                }
+            });
+    },
+
+    broadcastState(state) {
+        if (!this.channel) return;
+        this.channel.send({ type: 'broadcast', event: 'game-state', payload: state });
+    },
+    
+    leave() {
+        if (this.channel) this.channel.unsubscribe();
+        this.channel = null;
+        this.roomId = null;
+        this.isHost = false;
+        this._gameStarting = false;
+        this.clientList = [];
+        this.updateStatusUI('Connected', 'green');
+    }
+};
+
 // ==========================================
 // 9. INSTANTIATE & BIND
 // ==========================================
@@ -524,6 +687,7 @@ const gameStore = new Store(RulesEngine, new UIRenderer());
 
 // Expose Action Dispatcher securely to global scope purely for HTML inline onclick listeners to hook to.
 window.dispatchAction = function (type, payload = {}) {
+    // Pipe all external UI calls securely into the class architecture
     gameStore.dispatch({ type, payload });
 };
 
@@ -531,7 +695,7 @@ window.dispatchAction = function (type, payload = {}) {
 window.GameApp = {
     pendingNumPlayers: 2,
     pendingGameMode: null,
-    menuStateStack: ['setup-overlay'],
+    menuStateStack: ['home-overlay'],
     menu: {
         openOverlay: (id) => {
             document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
@@ -545,6 +709,12 @@ window.GameApp = {
                 document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
                 document.getElementById(prev).classList.add('active');
             }
+        },
+        openPauseMenu: () => {
+            document.getElementById('pause-overlay').classList.add('active');
+        },
+        resumeGame: () => {
+            document.getElementById('pause-overlay').classList.remove('active');
         },
         selectMode: (mode) => {
             window.GameApp.pendingGameMode = mode;
@@ -574,10 +744,14 @@ window.GameApp = {
             }
         },
         joinRoomSubmit: () => {
-            const val = document.getElementById('room-code-input').value.trim();
-            if (!val) return alert('Please enter a room code.');
-            document.getElementById('waiting-room-code-display').textContent = val;
-            window.GameApp.menu.openOverlay('waiting-room-overlay');
+            const inp = document.getElementById('room-code-input').value.trim().toUpperCase();
+            if (inp.length > 0) {
+                NetworkManager.joinRoom(inp);
+                window.GameApp.menu.openOverlay('waiting-room-overlay');
+                const titleEl = document.getElementById('waiting-title');
+                if (titleEl) titleEl.textContent = "Joining Room...";
+                document.getElementById('waiting-room-code-display').textContent = inp;
+            }
         },
         generateRoomId: () => {
             const DICT = ['Rangi', 'Papa', 'Tane', 'Tanga', 'Tawhi', 'Tu', 'Rongo', 'Rua', 'Whiro', 'Maui'];
@@ -586,28 +760,63 @@ window.GameApp = {
             return `${name}${salt}`;
         }
     },
+    startLocalGame(playersCount, hasAI, winScore = 35) {
+        window.GameApp.pendingNumPlayers = playersCount;
+        window.GameApp.pendingWinScore = winScore;
+        window.dispatchAction('START_GAME', { numPlayers: playersCount, winScore: winScore });
+        
+        // Manually enforce AI if isolated
+        if (hasAI && window.gameStore.state && window.gameStore.state.players.length > 1) {
+            window.gameStore.state.players[1].isAI = true;
+            window.gameStore.state.players[1].name = 'Spirit AI';
+        }
+        
+        this.menuStateStack = [];
+        document.querySelectorAll('.overlay').forEach(el => {
+            if (el.id !== 'pass-overlay' && el.id !== 'gameover-overlay' && el.id !== 'player-goals-overlay') {
+                el.classList.remove('active');
+            }
+        });
+        document.getElementById('game-menu-btn').style.display = 'flex';
+        this.Audio.setVolume(1);
+    },
+
+    startOnlineGame(playersCount, winScore) {
+        window.GameApp.pendingNumPlayers = playersCount;
+        const actualScore = winScore || window.GameApp.pendingWinScore || 35;
+        
+        // Let Redux engine build the state and instantly broadcast to all listeners
+        window.dispatchAction('START_GAME', { numPlayers: playersCount, winScore: actualScore, isOnlineGame: true });
+        
+        this.menuStateStack = [];
+        document.querySelectorAll('.overlay').forEach(el => {
+            if (el.id !== 'pass-overlay' && el.id !== 'gameover-overlay' && el.id !== 'player-goals-overlay') {
+                el.classList.remove('active');
+            }
+        });
+        document.getElementById('game-menu-btn').style.display = 'flex';
+    },
     startGame: (numPlayers) => {
+        // Redundant safely override
         window.GameApp.pendingNumPlayers = numPlayers;
-        document.getElementById('setup-overlay').classList.remove('active');
-        document.getElementById('difficulty-overlay').classList.add('active');
     },
     setDifficulty: (score) => {
         const app = window.GameApp;
+        app.pendingWinScore = score;
         
-        if (app.pendingGameMode === 'onlinePlay') {
-            document.getElementById('waiting-room-code-display').textContent = 'SEARCHING...';
+        if (app.pendingGameMode === 'onlineCreate' || app.pendingGameMode === 'onlinePlay') {
+            document.getElementById('difficulty-overlay').classList.remove('active');
             app.menu.openOverlay('waiting-room-overlay');
-            return;
-        } else if (app.pendingGameMode === 'onlineCreate') {
-            const code = app.menu.generateRoomId();
-            document.getElementById('waiting-room-code-display').textContent = code;
-            app.menu.openOverlay('waiting-room-overlay');
+            const roomId = NetworkManager.createRoom(app.pendingNumPlayers);
+            const titleEl = document.getElementById('waiting-title');
+            if (titleEl) titleEl.textContent = "Waiting for Player...";
+            document.getElementById('waiting-room-code-display').textContent = roomId;
             return;
         }
 
-        // Standard AI or Pass & Play setup
+        // Pass & Play or AI setup
         document.getElementById('difficulty-overlay').classList.remove('active');
-        window.dispatchAction('START_GAME', { numPlayers: app.pendingNumPlayers, winScore: score });
+        app.startLocalGame(app.pendingNumPlayers, app.pendingGameMode === 'ai', score);
         
         if (window.GameApp && window.GameApp.UI && window.GameApp.UI.expandStatusPanel) {
             window.GameApp.UI.expandStatusPanel();
@@ -623,7 +832,10 @@ window.GameApp = {
             }
         }
     },
-    resetToSetup: () => window.location.reload(),
+    resetToSetup: (reload = true) => {
+        if (reload) window.location.reload();
+        NetworkManager.leave();
+    },
     UI: {
         startTurn: () => window.dispatchAction('START_PLAYER_TURN'),
         toggleGoals: (e) => {
@@ -668,6 +880,33 @@ window.GameApp = {
                 bgm.pause();
                 btn.innerHTML = '🔇';
                 btn.classList.add('muted');
+            }
+        },
+        setVolume: (val) => {
+            const vol = parseFloat(val);
+            const bgm = document.getElementById('bg-music');
+            const tSound = document.getElementById('toast-sound');
+            const wSound = document.getElementById('win-sound');
+            const icon = document.getElementById('vol-icon');
+            
+            if (bgm) {
+                bgm.volume = vol;
+                if (vol > 0 && bgm.paused && document.getElementById('game-menu-btn').style.display !== 'none') {
+                     bgm.play().catch(e => console.log('play blocked', e));
+                }
+            }
+            if (tSound) tSound.volume = vol;
+            if (wSound) wSound.volume = vol;
+            
+            if (icon) {
+                icon.textContent = vol === 0 ? '🔇' : '🔊';
+            }
+            
+            const oldBtn = document.getElementById('soundToggle');
+            if (oldBtn) {
+                oldBtn.innerHTML = vol === 0 ? '🔇' : '🔊';
+                if (vol === 0) oldBtn.classList.add('muted');
+                else oldBtn.classList.remove('muted');
             }
         }
     }
@@ -747,5 +986,29 @@ window.addEventListener('DOMContentLoaded', () => {
         parent.appendChild(d);
     });
     
+    // Start home screen rotating tile
+    const homeContainer = document.getElementById('home-moai-container');
+    if (homeContainer) {
+        let currentIdx = Math.floor(Math.random() * TIKI_PROPS.length);
+        const rotateTile = () => {
+             const t = TIKI_PROPS[currentIdx];
+             homeContainer.innerHTML = ShapeManager.getTile(t, false, false);
+             // Ensure it appears crisp
+             const innerSprite = homeContainer.querySelector('.tiki-image-sprite');
+             if (innerSprite) {
+                 innerSprite.style.animation = 'none'; // reset any pulse if active
+                 // fade pop effect
+                 innerSprite.animate([
+                     { transform: 'scale(0.8)', opacity: 0.5 },
+                     { transform: 'scale(1)', opacity: 1 }
+                 ], { duration: 300, easing: 'cubic-bezier(0.175, 0.885, 0.32, 1.275)' });
+             }
+             currentIdx = (currentIdx + 1) % TIKI_PROPS.length;
+        };
+        rotateTile();
+        setInterval(rotateTile, 2000);
+    }
+
     CardDragger.init();
+    NetworkManager.init();
 });

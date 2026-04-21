@@ -16,16 +16,27 @@
 <body data-active-player="none">
 
   <!-- ========================
-       SETUP OVERLAY
+       HOME OVERLAY
        ======================== -->
-  <div id="setup-overlay" class="overlay active">
+  <div id="home-overlay" class="overlay active">
     <div class="overlay-panel">
-      <!-- Intro Moai SVG Element generated via JS or embedded here -->
-      <div id="setup-moai-container" style="margin: 0 auto 15px; width: 80px; height: 100px;"></div>
+      <div id="home-moai-container" style="margin: 0 auto 15px; width: 100px; height: 100px; transition: all 0.3s ease; filter: drop-shadow(0 0 15px rgba(255, 170, 0, 0.4));"></div>
       <h1 class="overlay-title">MOAI TOPPLE</h1>
       <p class="overlay-lore">
         Dominate the island by ascending your Sacred Moais to the top of the volcanic chute!
       </p>
+      <button class="diff-btn warrior" onclick="GameApp.menu.openOverlay('setup-overlay')" style="font-size: 1.5em; padding: 15px 40px; margin-top: 10px; width: 100%;">
+        <strong>PLAY</strong>
+      </button>
+    </div>
+  </div>
+
+  <!-- ========================
+       SETUP OVERLAY
+       ======================== -->
+  <div id="setup-overlay" class="overlay">
+    <div class="overlay-panel">
+      <h2 class="overlay-title">Mode</h2>
       <p class="diff-label">— CHOOSE GAME MODE —</p>
       <div class="diff-buttons">
         <button class="diff-btn novice" onclick="GameApp.menu.selectMode('ai')">
@@ -108,7 +119,7 @@
 
   <div id="waiting-room-overlay" class="overlay">
     <div class="overlay-panel">
-      <h2 class="overlay-title">Waiting...</h2>
+      <h2 id="waiting-title" class="overlay-title">Waiting...</h2>
       <div id="waiting-room-code-display" style="font-family: var(--font-title); font-size: 2.5em; color: var(--gold); margin: 20px 0;">SEARCHING</div>
       <p class="overlay-lore">Waiting for other players to connect. (Mockup)</p>
       <div class="spinner-box" style="font-size: 3em; display: inline-block;">⏳</div>
@@ -117,6 +128,29 @@
       </div>
     </div>
   </div>
+
+  <!-- ========================
+       PAUSE / IN-GAME MENU
+       ======================== -->
+  <div id="pause-overlay" class="overlay">
+    <div class="overlay-panel" style="max-width: 300px;">
+      <h2 class="overlay-title" style="font-size: 2.2em;">Menu</h2>
+      
+      <div style="margin: 20px 0; text-align: left;">
+        <label for="volume-slider" style="display: flex; justify-content: space-between; color: #f5e6d0; font-family: var(--font-game); font-size: 0.9em; margin-bottom: 8px;">
+          <span>Volume</span>
+          <span id="vol-icon">🔊</span>
+        </label>
+        <input type="range" id="volume-slider" class="volume-slider" min="0" max="1" step="0.05" value="1" oninput="GameApp.Audio.setVolume(this.value)">
+      </div>
+
+      <div class="diff-buttons" style="flex-direction: column;">
+        <button class="diff-btn" onclick="GameApp.menu.resumeGame()">Resume</button>
+        <button class="diff-btn warrior" onclick="GameApp.resetToSetup()" style="border-color: #e74c3c;">Leave Game</button>
+      </div>
+    </div>
+  </div>
+
 
   <!-- ========================
        PASS DEVICE OVERLAY
@@ -223,8 +257,16 @@
   <audio id="bg-music" src="themesong.mpeg" loop></audio>
   <audio id="toast-sound" src="faa.mpeg"></audio>
   <audio id="win-sound" src="win.mpeg"></audio>
-  <button class="sound-btn muted" id="soundToggle" title="Toggle Sound" onclick="GameApp.Audio.toggleSound()">🔇</button>
+  
+  <div id="network-status" style="display:none; position:fixed; top:75px; right:20px; z-index:300; background:rgba(0,0,0,0.8); border:2px solid #555; padding:5px 10px; border-radius:15px; color:#fff; font-family:var(--font-game); font-size:0.7em; align-items:center; gap:6px;">
+    <span id="net-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:gray;"></span>
+    <span id="net-text">Offline</span>
+  </div>
 
+  <button id="game-menu-btn" class="menu-btn anim-down" onclick="GameApp.menu.openPauseMenu()" style="display:none;" title="Menu">⋮</button>
+  <button class="sound-btn muted" id="soundToggle" title="Toggle Sound" onclick="GameApp.Audio.toggleSound()" style="display:none !important;">🔇</button>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="game.js"></script>
 </body>
 
