@@ -258,7 +258,7 @@ class Store {
         this.state = nextState;
 
         // Seamless Realtime Multiplayer Hook
-        if (window.NetworkManager && window.NetworkManager.channel && action.type !== 'RESET') {
+        if (window.NetworkManager && (window.NetworkManager.connections.length > 0 || window.NetworkManager.isHost) && action.type !== 'RESET') {
             window.NetworkManager.broadcastState(this.state);
         }
 
@@ -541,25 +541,27 @@ const AIEngine = {
 /* ================================================================
    NETWORK MANAGER (Supabase Realtime Broadcast)
    ================================================================ */
-const SUPABASE_URL = 'https://cpqxqzzcidazhxfgvatn.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_jQb0QtinjOpcb5L-bQSpMQ_ZSmHN15-';
 const LOCAL_CLIENT_ID = 'cli_' + Math.random().toString(36).substr(2, 9);
 
 const NetworkManager = {
-    client: null,
-    channel: null,
+    peer: null,
+    connections: [],
     roomId: null,
     isHost: false,
     expectedPlayers: 2,
-    clientList: [],
+    _gameStarting: false,
     
     init() {
-        if (!window.supabase) {
-            setTimeout(() => this.init(), 500); // Retry if CDN is slow
-            return;
+        if (!window.Peer) {
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js';
+            script.onload = () => {
+                this.updateStatusUI('Multiplayer Ready', 'green');
+            };
+            document.head.appendChild(script);
+        } else {
+            this.updateStatusUI('Multiplayer Ready', 'green');
         }
-        this.client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-        this.updateStatusUI('Connected', 'green');
     },
 
     updateStatusUI(text, color) {
@@ -577,106 +579,136 @@ const NetworkManager = {
         this.roomId = 'M' + Math.floor(1000 + Math.random() * 9000);
         this.isHost = true;
         this.expectedPlayers = expectedPlayers;
-        this.clientList = [LOCAL_CLIENT_ID];
-        this.joinChannel(this.roomId, expectedPlayers);
+        this.connections = [];
+        this._gameStarting = false;
+        
+        this.updateStatusUI('Opening Network...', 'yellow');
+        
+        this.peer = new Peer(this.roomId);
+        
+        this.peer.on('open', (id) => {
+            this.updateStatusUI(`Room: ${id}`, 'lime');
+        });
+
+        this.peer.on('connection', (conn) => {
+            if (!this.connections.find(c => c.peer === conn.peer)) {
+                this.connections.push(conn);
+            }
+            
+            conn.on('data', (data) => {
+                this.handleMessage(data, conn);
+            });
+            
+            conn.on('open', () => {
+                this.handleMessage({ event: 'request-join', payload: conn.peer }, conn);
+            });
+        });
+
+        this.peer.on('error', (err) => {
+            this.updateStatusUI('Network Error', 'red');
+            console.error('PeerJS error:', err);
+        });
+        
         return this.roomId;
     },
 
     joinRoom(id) {
         this.roomId = id;
         this.isHost = false;
-        this.joinChannel(id, 0);
+        this.updateStatusUI('Joining...', 'yellow');
+        
+        this.peer = new Peer();
+        this.peer.on('open', () => {
+            const conn = this.peer.connect(id);
+            this.connections = [conn];
+            
+            conn.on('open', () => {
+                this.updateStatusUI(`Connected to: ${id}`, 'lime');
+                
+                let attempts = 0;
+                const tryJoin = setInterval(() => {
+                    if (window.gameStore && window.gameStore.state && window.gameStore.state.turnPhase && window.gameStore.state.turnPhase !== 'setup') {
+                        clearInterval(tryJoin);
+                        return;
+                    }
+                    if (conn.open) {
+                        conn.send({ event: 'request-join', payload: this.peer.id });
+                    }
+                    attempts++;
+                    if (attempts > 30) clearInterval(tryJoin);
+                }, 1000);
+                
+                conn.send({ event: 'request-join', payload: this.peer.id });
+            });
+            
+            conn.on('data', (data) => {
+                this.handleMessage(data, conn);
+            });
+            
+            conn.on('close', () => {
+                this.updateStatusUI('Disconnected', 'red');
+            });
+        });
+        
+        this.peer.on('error', (err) => {
+            this.updateStatusUI('Room Error/Not Found', 'red');
+            console.error('PeerJS error:', err);
+        });
     },
 
-    joinChannel(id, expectedPlayers) {
-        if (this.channel) this.channel.unsubscribe();
-        this.updateStatusUI('Joining...', 'yellow');
-
-        this.channel = this.client.channel(`room:${id}`, {
-            config: { broadcast: { ack: true } }
-        });
-
-        this.channel
-            .on('broadcast', { event: 'game-state' }, (payload) => {
-                if (payload.payload) {
-                    window.gameStore.state = payload.payload;
-                    window.gameStore.renderer.render(window.gameStore.state);
-
-                    // Immediately force away all non-gameplay overlays for Guests
-                    if (window.gameStore.state.turnPhase !== 'setup') {
-                        document.querySelectorAll('.overlay').forEach(el => {
-                            if (el.id !== 'pass-overlay' && el.id !== 'gameover-overlay' && el.id !== 'player-goals-overlay') {
-                                el.classList.remove('active');
-                            }
-                        });
-                        if (window.GameApp) window.GameApp.menuStateStack = [];
-                    }
-                }
-            })
-            .on('broadcast', { event: 'request-join' }, (payload) => {
-                if (this.isHost) {
-                    const cid = payload.payload || 'unknown';
-                    if (!this.clientList.includes(cid)) {
-                        this.clientList.push(cid);
-                    }
-                    
-                    if (window.GameApp && window.GameApp.menuStateStack.includes('waiting-room-overlay')) {
-                        const titleEl = document.getElementById('waiting-title');
-                        
-                        if (this.clientList.length < this.expectedPlayers) {
-                            if (titleEl) titleEl.textContent = `Waiting (${this.clientList.length}/${this.expectedPlayers} Joined)...`;
-                        } else if (!this._gameStarting) {
-                            this._gameStarting = true;
-                            if (titleEl) titleEl.textContent = "All Players Ready! Starting...";
-                            setTimeout(() => {
-                               window.GameApp.startOnlineGame(this.expectedPlayers);
-                            }, 800);
+    handleMessage(payload, conn) {
+        if (payload.event === 'game-state') {
+            if (payload.payload) {
+                window.gameStore.state = payload.payload;
+                window.gameStore.renderer.render(window.gameStore.state);
+                
+                if (window.gameStore.state.turnPhase !== 'setup') {
+                    document.querySelectorAll('.overlay').forEach(el => {
+                        if (el.id !== 'pass-overlay' && el.id !== 'gameover-overlay' && el.id !== 'player-goals-overlay') {
+                            el.classList.remove('active');
                         }
-                    } else if (window.gameStore && window.gameStore.state && window.gameStore.state.turnPhase !== 'setup') {
-                        // If game already started and someone refreshed/rejoined, resync them
-                        this.broadcastState(window.gameStore.state);
-                    }
+                    });
+                    if (window.GameApp) window.GameApp.menuStateStack = [];
                 }
-            })
-            .subscribe((status) => {
-                if (status === 'SUBSCRIBED') {
-                    this.updateStatusUI(`Room: ${id}`, 'lime');
-                    if (!this.isHost) {
-                        // Keep requesting join until state is populated and turnPhase is active
-                        let attempts = 0;
-                        const tryJoin = setInterval(() => {
-                            if (window.gameStore && window.gameStore.state && window.gameStore.state.turnPhase) {
-                                clearInterval(tryJoin);
-                                return;
-                            }
-                            if (this.channel) {
-                                this.channel.send({ type: 'broadcast', event: 'request-join', payload: LOCAL_CLIENT_ID });
-                            }
-                            attempts++;
-                            if (attempts > 30) clearInterval(tryJoin); // timeout after 30s
-                        }, 1000);
-                        
-                        this.channel.send({ type: 'broadcast', event: 'request-join', payload: LOCAL_CLIENT_ID });
-                    }
-                } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                    this.updateStatusUI('Offline', 'red');
+            }
+        } else if (payload.event === 'request-join' && this.isHost) {
+            if (window.GameApp && window.GameApp.menuStateStack.includes('waiting-room-overlay')) {
+                const titleEl = document.getElementById('waiting-title');
+                const joinedCount = this.connections.length + 1;
+                
+                if (joinedCount < this.expectedPlayers) {
+                    if (titleEl) titleEl.textContent = `Waiting (${joinedCount}/${this.expectedPlayers} Joined)...`;
+                } else if (!this._gameStarting) {
+                    this._gameStarting = true;
+                    if (titleEl) titleEl.textContent = "All Players Ready! Starting...";
+                    setTimeout(() => {
+                       window.GameApp.startOnlineGame(this.expectedPlayers);
+                    }, 800);
                 }
-            });
+            } else if (window.gameStore && window.gameStore.state && window.gameStore.state.turnPhase !== 'setup') {
+                this.broadcastState(window.gameStore.state);
+            }
+        }
     },
 
     broadcastState(state) {
-        if (!this.channel) return;
-        this.channel.send({ type: 'broadcast', event: 'game-state', payload: state });
+        this.connections.forEach(conn => {
+            if (conn.open) {
+                conn.send({ event: 'game-state', payload: state });
+            }
+        });
     },
     
     leave() {
-        if (this.channel) this.channel.unsubscribe();
-        this.channel = null;
+        if (this.peer) {
+            this.peer.destroy();
+        }
+        this.peer = null;
+        this.connections = [];
         this.roomId = null;
         this.isHost = false;
         this._gameStarting = false;
-        this.clientList = [];
-        this.updateStatusUI('Connected', 'green');
+        this.updateStatusUI('Multiplayer Ready', 'green');
     }
 };
 
